@@ -1,0 +1,19 @@
+[package]
+name = "tiny-pinch"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[dependencies]
+anyhow = "1.0.89"
+clap = { version = "4.5.18", features = ["derive"] }
+dll-syringe = "0.15.2"
+dotenvy = "0.15.7"
+lazy_static = "1.5.0"
+shell-words = "1.1.0"
+steamlocate = "1.2.1"
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
