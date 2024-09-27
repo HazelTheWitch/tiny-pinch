@@ -1,4 +1,5 @@
 pub mod dump;
+pub mod offsets;
 
 use std::{env, net::TcpStream, sync::Mutex};
 
@@ -33,5 +34,7 @@ fn fallible() -> anyhow::Result<()> {
 
     let arguments = Arguments::parse_from(words);
 
-    dump::operate(arguments)
+    let offsets = offsets::find_offsets(env::var("TINY_PINCH_PDB")?)?;
+
+    dump::operate(arguments, offsets)
 }

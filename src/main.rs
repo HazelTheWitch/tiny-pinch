@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
 
     tiny_glade_command.env("TINY_PINCH_ARGUMENTS", shell_words::join(arguments));
     tiny_glade_command.env("TINY_PINCH_PDB", &*GLADE_PDB_PATH);
-    
+
     let tiny_glade_process = tiny_glade_command.spawn()?;
 
     info!("Launched Tiny Glade process: {}", tiny_glade_process.id());

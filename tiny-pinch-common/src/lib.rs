@@ -1,4 +1,5 @@
 pub mod bevy_utils;
+pub mod pdb_utils;
 
 use std::mem::transmute;
 
