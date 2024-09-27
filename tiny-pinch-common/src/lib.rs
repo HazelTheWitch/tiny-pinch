@@ -1,3 +1,5 @@
+pub mod bevy_utils;
+
 use std::mem::transmute;
 
 use once_cell::unsync::Lazy;

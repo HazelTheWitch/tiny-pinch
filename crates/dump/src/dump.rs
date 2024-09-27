@@ -10,14 +10,14 @@ use tracing::{error, info, warn};
 use tiny_pinch_common::{exe_space, transmute_functon};
 
 use crate::Arguments;
-
-/// bevy_ecs::schedule::schedule::Schedule::run
-const RUN_SCHEDULE_OFFSET: isize = exe_space(0x14082bb30);
  
 static INJECT_INSTANT: Mutex<Option<DateTime<Utc>>> = Mutex::new(None);
 static ARGUMENTS: Mutex<Option<Arguments>> = Mutex::new(None);
 static RAN: Lazy<Mutex<HashMap<WorldId, HashSet<String>>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static STARTUP_SYSTEMS: &[&str] = &["PreStartup", "Startup", "PostStartup"];
+
+/// bevy_ecs::schedule::schedule::Schedule::run
+const RUN_SCHEDULE_OFFSET: isize = exe_space(0x14082bb30);
 
 static_detour! {
     static RunSchedule: extern "cdecl" fn(*mut Schedule, *mut World);
