@@ -1,15 +1,17 @@
 use std::{collections::{HashMap, HashSet}, fs::{self, File}, io::{BufWriter, Write}, mem::transmute, path::{Path, PathBuf}, slice::from_raw_parts};
 
 use anyhow::anyhow;
-use bevy_ecs::{schedule::{BoxedCondition, NodeId, Schedule}, world::{World, WorldId}};
+use bevy_ecs::{archetype::{Archetype, ArchetypeComponentId, ArchetypeId, Archetypes}, component::ComponentId, schedule::{BoxedCondition, NodeId, Schedule}, storage::Storages, world::{World, WorldId}};
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use retour::static_detour;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+use tiny_pinch_common::{exe_space, transmute_functon};
 
-use crate::{offset::{exe_space, transmute_functon}, Arguments};
+use crate::Arguments;
 
+/// bevy_ecs::schedule::schedule::Schedule::run
 const RUN_SCHEDULE_OFFSET: isize = exe_space(0x14082bb30);
  
 static INJECT_INSTANT: Mutex<Option<DateTime<Utc>>> = Mutex::new(None);
@@ -81,6 +83,7 @@ pub fn dump(world: &World, schedule: &mut Schedule, label: &str) -> anyhow::Resu
     dump_resources(world, &dump_base_path)?;
     dump_archetypes(world, &dump_base_path)?;
     dump_schedule(schedule, &dump_base_path)?;
+    dump_systems(world, schedule, &dump_base_path)?;
 
     Ok(())
 }
@@ -151,10 +154,12 @@ fn dump_archetypes(world: &World, path: impl AsRef<Path>) -> anyhow::Result<()> 
     Ok(())
 }
 
-fn dump_schedule(schedule: &mut Schedule, path: impl AsRef<Path>) -> anyhow::Result<()> {
+fn dump_schedule(schedule: &Schedule, path: impl AsRef<Path>) -> anyhow::Result<()> {
     let mut file = BufWriter::new(File::create(path.as_ref().join("schedule.txt"))?);
 
-    writeln!(file, "Schedule: {:?}", schedule.label())?;
+    let executor_kind = schedule.get_executor_kind();
+
+    writeln!(file, "Schedule: {:?} ({executor_kind:?})", schedule.label())?;
 
     let graph = schedule.graph();
 
@@ -201,6 +206,141 @@ fn dump_schedule(schedule: &mut Schedule, path: impl AsRef<Path>) -> anyhow::Res
     }
 
     Ok(())
+}
+
+fn dump_systems(world: &World, schedule: &Schedule, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    let mut file = BufWriter::new(File::create(path.as_ref().join("systems.txt"))?);
+
+    let components = world.components();
+    let archetypes = world.archetypes();
+
+    let flag = |b: bool, f: &'static str| if b { f } else { " " };
+
+    for system in &schedule.executable.systems {
+        writeln!(file, "{} {} {} {}", system.name(), flag(system.is_exclusive(), "E"), flag(system.is_send(), "S"), flag(system.has_deferred(), "D"))?;
+
+        let archetype_access = system.archetype_component_access();
+        let storages = world.storages();
+
+        for id in archetype_access.reads() {
+            let Some(usage) = get_archetype_id_usage(&id, archetypes, storages) else {
+                warn!("Could not get archetype usage");
+                continue;
+            };
+
+            let component_id = usage.component_id();
+
+            let Some(info) = components.get_info(component_id) else {
+                warn!("Could not get component info for {component_id:?}");
+                continue;
+            };
+
+            let flag = usage.flag();
+
+            if let ArchetypeIdUsage::Component(_, archetype_id) = usage {
+                writeln!(file, "{flag} R {} {}", info.name(), archetype_id.index())?;
+            } else {
+                writeln!(file, "{flag} R {}", info.name())?;
+            }
+        }
+
+        for id in archetype_access.writes() {
+            let Some(usage) = get_archetype_id_usage(&id, archetypes, storages) else {
+                warn!("Could not get archetype usage");
+                continue;
+            };
+
+            let component_id = usage.component_id();
+
+            let Some(info) = components.get_info(component_id) else {
+                warn!("Could not get component info for {component_id:?}");
+                continue;
+            };
+
+            let flag = usage.flag();
+
+            if let ArchetypeIdUsage::Component(_, archetype_id) = usage {
+                writeln!(file, "{flag} W {} {}", info.name(), archetype_id.index())?;
+            } else {   
+                writeln!(file, "{flag} W {}", info.name())?;
+            }
+        }
+
+        writeln!(file)?;
+    }
+
+    Ok(())
+}
+
+enum ArchetypeIdUsage {
+    Component(ComponentId, ArchetypeId),
+    Resource(ComponentId),
+    NonSendResource(ComponentId),
+}
+
+impl ArchetypeIdUsage {
+    pub fn component_id(&self) -> ComponentId {
+        match self {
+            ArchetypeIdUsage::Component(component_id, _) => *component_id,
+            ArchetypeIdUsage::Resource(component_id) => *component_id,
+            ArchetypeIdUsage::NonSendResource(component_id) => *component_id,
+        }
+    }
+
+    pub fn flag(&self) -> &'static str {
+        match self {
+            ArchetypeIdUsage::Component(_, _) => "C",
+            ArchetypeIdUsage::Resource(_) => "R",
+            ArchetypeIdUsage::NonSendResource(_) => "N",
+        }
+    }
+}
+
+fn get_archetype_id_usage(id: &ArchetypeComponentId, archetypes: &Archetypes, storages: &Storages) -> Option<ArchetypeIdUsage> {
+    if let Some((component_id, archetype)) = archetypes
+        .iter()
+        .find_map(|archetype| lookup_archetype_component_id(archetype, &id).map(|id| (id, archetype)))
+    {
+        return Some(ArchetypeIdUsage::Component(component_id, archetype.id))
+    }
+
+    if let Some(component_id) = storages
+        .resources
+        .iter()
+        .find_map(|(component_id, resource_data)| {
+            if resource_data.id() == *id {
+                Some(component_id)
+            } else {
+                None
+            }
+        }) {
+        return Some(ArchetypeIdUsage::Resource(component_id));
+    }
+
+    if let Some(component_id) = storages
+        .non_send_resources
+        .iter()
+        .find_map(|(component_id, resource_data)| {
+            if resource_data.id() == *id {
+                Some(component_id)
+            } else {
+                None
+            }
+        }) {
+        return Some(ArchetypeIdUsage::NonSendResource(component_id));
+    }
+
+    None
+}
+
+fn lookup_archetype_component_id(archetype: &Archetype, id: &ArchetypeComponentId) -> Option<ComponentId> {
+    for (component_id, archetype_component_info) in archetype.components.iter() {
+        if archetype_component_info.archetype_component_id == *id {
+            return Some(*component_id);
+        }
+    }
+
+    None
 }
 
 pub fn operate(args: Arguments) -> anyhow::Result<()> {

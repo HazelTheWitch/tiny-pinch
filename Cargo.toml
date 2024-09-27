@@ -5,7 +5,7 @@ edition = "2021"
 
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["crates/*", "tiny-pinch-common"]
 
 [dependencies]
 anyhow = "1.0.89"

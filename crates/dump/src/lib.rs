@@ -1,5 +1,4 @@
 pub mod dump;
-pub mod offset;
 
 use std::{env, net::TcpStream, sync::Mutex};
 
